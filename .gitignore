@@ -1,2 +1,6 @@
 zig/.zig-cache
 zig/zig-out
+*.wasm
+node_modules/
+dist/
+.DS_Store

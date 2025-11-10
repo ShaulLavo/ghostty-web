@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ghostty WASM - SGR Parser Demo</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            max-width: 900px;
+            margin: 40px auto;
+            padding: 0 20px;
+            line-height: 1.6;
+        }
+        h1 { color: #333; }
+        .demo-box {
+            background: #f9f9f9;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            padding: 20px;
+            margin: 20px 0;
+        }
+        textarea, input {
+            width: 100%;
+            padding: 10px;
+            font-family: 'Monaco', 'Courier New', monospace;
+            font-size: 14px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+        button {
+            background: #0066cc;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            margin: 10px 5px 10px 0;
+        }
+        button:hover { background: #0052a3; }
+        button:disabled { background: #ccc; cursor: not-allowed; }
+        .output {
+            background: #2d2d2d;
+            color: #d4d4d4;
+            border-radius: 4px;
+            padding: 15px;
+            font-family: 'Monaco', 'Courier New', monospace;
+            font-size: 14px;
+            white-space: pre-wrap;
+            min-height: 100px;
+        }
+        .attribute {
+            background: #3a3a3a;
+            border-left: 3px solid #0066cc;
+            padding: 10px;
+            margin: 5px 0;
+        }
+        .attr-name {
+            font-weight: bold;
+            color: #4ec9b0;
+        }
+        .attr-value {
+            color: #ce9178;
+        }
+        .status {
+            padding: 10px;
+            border-radius: 4px;
+            margin: 10px 0;
+        }
+        .status.loading { background: #fff3cd; color: #856404; }
+        .status.success { background: #d4edda; color: #155724; }
+        .status.error { background: #f8d7da; color: #721c24; }
+        .example {
+            display: inline-block;
+            margin: 5px;
+            padding: 5px 10px;
+            background: #e9ecef;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 13px;
+        }
+        .example:hover { background: #dee2e6; }
+    </style>
+</head>
+<body>
+    <h1>🎨 Ghostty WASM - SGR Parser Demo</h1>
+    <p>This demonstrates parsing ANSI SGR (Select Graphic Rendition) sequences using <strong>libghostty-vt</strong>.</p>
+
+    <div id="status" class="status loading">Loading Ghostty WASM module...</div>
+
+    <div class="demo-box">
+        <h3>SGR Sequence Input</h3>
+        <p>Enter SGR parameters (like "1;31" for bold red foreground):</p>
+        <input 
+            type="text" 
+            id="sgrInput" 
+            placeholder="1;31" 
+            value="1;38;2;255;100;50;48;5;233"
+            disabled
+        />
+        <p style="font-size: 13px; color: #666; margin: 10px 0;">
+            Quick examples:
+            <span class="example" data-value="1;31">Bold Red</span>
+            <span class="example" data-value="4;34">Underline Blue</span>
+            <span class="example" data-value="38;2;255;100;50">RGB Foreground</span>
+            <span class="example" data-value="1;38;2;255;100;50;48;5;233">Complex</span>
+            <span class="example" data-value="0">Reset</span>
+        </p>
+    </div>
+
+    <div class="demo-box">
+        <h3>Parsed Attributes</h3>
+        <div id="output" class="output">Enter SGR parameters above...</div>
+    </div>
+
+    <div class="demo-box">
+        <h3>About This Demo</h3>
+        <p><strong>What's happening:</strong></p>
+        <ul>
+            <li>Input is parsed as SGR parameters (the numbers in <code>\x1b[...m</code>)</li>
+            <li><strong>libghostty-vt.wasm</strong> parses them into individual attributes</li>
+            <li>Supports: 8/16/256 colors, RGB, bold, italic, underline, etc.</li>
+        </ul>
+        <p><strong>Try these formats:</strong></p>
+        <ul>
+            <li><code>31</code> - Red foreground (8-color)</li>
+            <li><code>1;31</code> - Bold + red</li>
+            <li><code>38;5;196</code> - 256-color foreground (bright red)</li>
+            <li><code>38;2;255;100;50</code> - RGB foreground (orange)</li>
+            <li><code>48;2;30;30;30</code> - RGB background (dark gray)</li>
+        </ul>
+    </div>
+
+    <script type="module">
+        // Note: In production, these would be imported from compiled TS modules
+        // For this demo, we'll inline the core functionality
+
+        let ghostty = null;
+        let sgrParser = null;
+
+        const SgrAttributeTag = {
+            BOLD: 2,
+            RESET_BOLD: 3,
+            ITALIC: 4,
+            RESET_ITALIC: 5,
+            FAINT: 6,
+            UNDERLINE: 8,
+            RESET_UNDERLINE: 9,
+            BLINK: 10,
+            INVERSE: 12,
+            INVISIBLE: 14,
+            STRIKETHROUGH: 16,
+            FG_8: 18,
+            FG_16: 19,
+            FG_256: 20,
+            FG_RGB: 21,
+            FG_DEFAULT: 22,
+            BG_8: 23,
+            BG_16: 24,
+            BG_256: 25,
+            BG_RGB: 26,
+            BG_DEFAULT: 27,
+        };
+
+        function formatAttribute(attr) {
+            const tagName = Object.keys(SgrAttributeTag).find(k => SgrAttributeTag[k] === attr.tag);
+            
+            switch (attr.tag) {
+                case SgrAttributeTag.BOLD:
+                    return `<div class="attribute"><span class="attr-name">BOLD</span>: Enable</div>`;
+                case SgrAttributeTag.ITALIC:
+                    return `<div class="attribute"><span class="attr-name">ITALIC</span>: Enable</div>`;
+                case SgrAttributeTag.UNDERLINE:
+                    return `<div class="attribute"><span class="attr-name">UNDERLINE</span>: Enable</div>`;
+                case SgrAttributeTag.FG_8:
+                case SgrAttributeTag.FG_16:
+                case SgrAttributeTag.FG_256:
+                    return `<div class="attribute"><span class="attr-name">${tagName}</span>: <span class="attr-value">Color ${attr.color}</span></div>`;
+                case SgrAttributeTag.FG_RGB:
+                    return `<div class="attribute"><span class="attr-name">FG_RGB</span>: <span class="attr-value" style="color: rgb(${attr.color.r}, ${attr.color.g}, ${attr.color.b})">rgb(${attr.color.r}, ${attr.color.g}, ${attr.color.b})</span></div>`;
+                case SgrAttributeTag.BG_8:
+                case SgrAttributeTag.BG_16:
+                case SgrAttributeTag.BG_256:
+                    return `<div class="attribute"><span class="attr-name">${tagName}</span>: <span class="attr-value">Color ${attr.color}</span></div>`;
+                case SgrAttributeTag.BG_RGB:
+                    return `<div class="attribute"><span class="attr-name">BG_RGB</span>: <span class="attr-value" style="background: rgb(${attr.color.r}, ${attr.color.g}, ${attr.color.b}); padding: 2px 6px;">rgb(${attr.color.r}, ${attr.color.g}, ${attr.color.b})</span></div>`;
+                case SgrAttributeTag.FG_DEFAULT:
+                    return `<div class="attribute"><span class="attr-name">FG_DEFAULT</span>: Reset to default foreground</div>`;
+                case SgrAttributeTag.BG_DEFAULT:
+                    return `<div class="attribute"><span class="attr-name">BG_DEFAULT</span>: Reset to default background</div>`;
+                default:
+                    return `<div class="attribute"><span class="attr-name">${tagName || 'UNKNOWN'}</span></div>`;
+            }
+        }
+
+        function parseSgr(input) {
+            if (!sgrParser) {
+                document.getElementById('output').innerHTML = '<span style="color: #ff6b6b">❌ Parser not initialized</span>';
+                return;
+            }
+
+            try {
+                // Parse input (comma or semicolon separated)
+                const params = input.split(/[;,]/).map(s => parseInt(s.trim())).filter(n => !isNaN(n));
+                
+                if (params.length === 0) {
+                    document.getElementById('output').innerHTML = '<span style="color: #888">No parameters entered</span>';
+                    return;
+                }
+
+                // Parse using Ghostty WASM
+                const { exports, parser } = sgrParser;
+                
+                // Allocate parameter array
+                const paramsPtr = exports.ghostty_wasm_alloc_u16_array(params.length);
+                const view = new DataView(exports.memory.buffer);
+                
+                // Write parameters (uint16_t array)
+                for (let i = 0; i < params.length; i++) {
+                    view.setUint16(paramsPtr + i * 2, params[i], true);
+                }
+
+                // Set params in parser
+                const result = exports.ghostty_sgr_set_params(parser, paramsPtr, 0, params.length);
+                exports.ghostty_wasm_free_u16_array(paramsPtr, params.length);
+                
+                if (result !== 0) {
+                    throw new Error(`Failed to set SGR params: ${result}`);
+                }
+
+                // Iterate through attributes
+                const attributes = [];
+                const attrPtr = exports.ghostty_wasm_alloc_sgr_attribute();
+                
+                while (exports.ghostty_sgr_next(parser, attrPtr)) {
+                    const tag = exports.ghostty_sgr_attribute_tag(attrPtr);
+                    const attr = { tag };
+                    
+                    // Read color values if applicable
+                    if ([18, 19, 20, 23, 24, 25].includes(tag)) { // FG/BG 8/16/256
+                        attr.color = view.getUint8(attrPtr + 4);
+                    } else if ([21, 26, 31].includes(tag)) { // FG/BG/UL RGB
+                        attr.color = {
+                            r: view.getUint8(attrPtr + 4),
+                            g: view.getUint8(attrPtr + 5),
+                            b: view.getUint8(attrPtr + 6)
+                        };
+                    }
+                    
+                    attributes.push(attr);
+                }
+                
+                exports.ghostty_wasm_free_sgr_attribute(attrPtr);
+                
+                if (attributes.length === 0) {
+                    document.getElementById('output').innerHTML = '<span style="color: #888">No attributes parsed (empty or invalid)</span>';
+                    return;
+                }
+
+                // Display results
+                const html = attributes.map(formatAttribute).join('');
+                document.getElementById('output').innerHTML = html;
+
+            } catch (error) {
+                document.getElementById('output').innerHTML = `<span style="color: #ff6b6b">❌ Error: ${error.message}</span>`;
+                console.error(error);
+            }
+        }
+
+        async function init() {
+            const statusEl = document.getElementById('status');
+            const inputEl = document.getElementById('input');
+
+            try {
+                statusEl.textContent = 'Loading Ghostty WASM...';
+                
+                // Load the WASM module
+                const response = await fetch('../ghostty-vt.wasm');
+                if (!response.ok) {
+                    throw new Error(`Failed to fetch WASM: ${response.status} ${response.statusText}`);
+                }
+                
+                const wasmBytes = await response.arrayBuffer();
+                const wasmModule = await WebAssembly.instantiate(wasmBytes, {
+                    env: {
+                        log: (ptr, len) => {
+                            const bytes = new Uint8Array(wasmModule.instance.exports.memory.buffer, ptr, len);
+                            const text = new TextDecoder().decode(bytes);
+                            console.log('[ghostty-wasm]', text);
+                        }
+                    }
+                });
+                
+                // Create SGR parser
+                const exports = wasmModule.instance.exports;
+                
+                // Allocate parser
+                const parserPtrPtr = exports.ghostty_wasm_alloc_opaque();
+                const result = exports.ghostty_sgr_new(0, parserPtrPtr);
+                if (result !== 0) {
+                    throw new Error(`Failed to create SGR parser: ${result}`);
+                }
+                
+                // Read parser pointer
+                const view = new DataView(exports.memory.buffer);
+                const parser = view.getUint32(parserPtrPtr, true);
+                exports.ghostty_wasm_free_opaque(parserPtrPtr);
+                
+                // Store for use in parseSgr
+                sgrParser = { exports, parser };
+                
+                statusEl.className = 'status success';
+                statusEl.textContent = '✅ Ghostty WASM loaded successfully!';
+                document.getElementById('sgrInput').disabled = false;
+                
+                // Initial parse
+                parseSgr(document.getElementById('sgrInput').value);
+
+            } catch (error) {
+                statusEl.className = 'status error';
+                statusEl.innerHTML = `❌ ${error.message}<br><br><strong>To build the WASM:</strong><br><code>cd /tmp/ghostty && zig build lib-vt -Dtarget=wasm32-freestanding -Doptimize=ReleaseSmall</code>`;
+                console.error(error);
+            }
+        }
+
+        // Event listeners
+        document.getElementById('sgrInput')?.addEventListener('input', (e) => {
+            parseSgr(e.target.value);
+        });
+
+        document.querySelectorAll('.example').forEach(el => {
+            el.addEventListener('click', () => {
+                const input = document.getElementById('sgrInput');
+                input.value = el.dataset.value;
+                parseSgr(el.dataset.value);
+            });
+        });
+
+        // Initialize
+        init();
+    </script>
+</body>
+</html>
