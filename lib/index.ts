@@ -18,24 +18,26 @@ export type {
 } from './interfaces';
 
 // Ghostty WASM components (for advanced usage)
-export { Ghostty, SgrParser, KeyEncoder } from './ghostty';
+export { Ghostty, GhosttyTerminal, SgrParser, KeyEncoder, CellFlags } from './ghostty';
 export type { 
   SgrAttribute, 
   SgrAttributeTag, 
   KeyEvent, 
   KeyAction, 
   Key, 
-  Mods 
+  Mods,
+  GhosttyCell,
+  RGB,
+  Cursor,
+  TerminalHandle
 } from './types';
 
-// Buffer types (for addon developers)
-export type { Cell, CellColor, Cursor } from './buffer';
+// Legacy buffer types (for renderer compatibility)
+export type { Cell, CellColor } from './buffer-types';
 
 // Low-level components (for custom integrations)
-export { ScreenBuffer } from './buffer';
-export { VTParser } from './vt-parser';
 export { CanvasRenderer } from './renderer';
-export type { RendererOptions, FontMetrics } from './renderer';
+export type { RendererOptions, FontMetrics, IRenderable } from './renderer';
 export { InputHandler } from './input-handler';
 export { EventEmitter } from './event-emitter';
 

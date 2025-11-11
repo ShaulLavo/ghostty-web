@@ -13,10 +13,23 @@ import {
   type KeyEvent,
   KeyEncoderOption,
   type KittyKeyFlags,
+  type TerminalHandle,
+  type GhosttyCell,
+  type Cursor,
+  type RGB,
+  CellFlags,
 } from './types';
 
 // Re-export types for convenience
-export { SgrAttributeTag, type SgrAttribute, type RGBColor };
+export {
+  SgrAttributeTag,
+  type SgrAttribute,
+  type RGBColor,
+  type GhosttyCell,
+  type Cursor,
+  type RGB,
+  CellFlags,
+};
 
 /**
  * Main Ghostty WASM wrapper class
@@ -49,6 +62,13 @@ export class Ghostty {
    */
   createKeyEncoder(): KeyEncoder {
     return new KeyEncoder(this.exports);
+  }
+
+  /**
+   * Create a terminal emulator instance
+   */
+  createTerminal(cols: number = 80, rows: number = 24): GhosttyTerminal {
+    return new GhosttyTerminal(this.exports, this.memory, cols, rows);
   }
 
   /**
@@ -388,5 +408,313 @@ export class KeyEncoder {
       this.exports.ghostty_key_encoder_free(this.encoder);
       this.encoder = 0;
     }
+  }
+}
+
+
+/**
+ * GhosttyTerminal - Wraps the WASM terminal emulator
+ * 
+ * This replaces the TypeScript ScreenBuffer and VTParser with
+ * Ghostty's complete terminal implementation via WASM.
+ * 
+ * @example
+ * ```typescript
+ * const ghostty = await Ghostty.load('./ghostty-vt.wasm');
+ * const term = ghostty.createTerminal(80, 24);
+ * 
+ * term.write('Hello\x1b[31m Red\x1b[0m\n');
+ * const cursor = term.getCursor();
+ * const cells = term.getLine(0);
+ * 
+ * term.free();
+ * ```
+ */
+export class GhosttyTerminal {
+  private exports: GhosttyWasmExports;
+  private memory: WebAssembly.Memory;
+  private handle: TerminalHandle;
+  private _cols: number;
+  private _rows: number;
+
+  /**
+   * Size of ghostty_cell_t in bytes (12 bytes in WASM)
+   * Structure: codepoint(u32) + fg_rgb(3xu8) + bg_rgb(3xu8) + flags(u8) + width(u8)
+   */
+  private static readonly CELL_SIZE = 12;
+
+  /**
+   * Create a new terminal.
+   * 
+   * @param exports WASM exports
+   * @param memory WASM memory
+   * @param cols Number of columns (default: 80)
+   * @param rows Number of rows (default: 24)
+   * @throws Error if allocation fails
+   */
+  constructor(
+    exports: GhosttyWasmExports,
+    memory: WebAssembly.Memory,
+    cols: number = 80,
+    rows: number = 24
+  ) {
+    this.exports = exports;
+    this.memory = memory;
+    this._cols = cols;
+    this._rows = rows;
+
+    const handle = this.exports.ghostty_terminal_new(cols, rows);
+    if (handle === 0) {
+      throw new Error('Failed to allocate terminal (out of memory)');
+    }
+
+    this.handle = handle;
+  }
+
+  /**
+   * Free the terminal. Must be called to prevent memory leaks.
+   */
+  free(): void {
+    if (this.handle !== 0) {
+      this.exports.ghostty_terminal_free(this.handle);
+      this.handle = 0;
+    }
+  }
+
+  /**
+   * Write data to terminal (parses VT sequences and updates screen).
+   * 
+   * @param data UTF-8 string or Uint8Array
+   * 
+   * @example
+   * ```typescript
+   * term.write('Hello, World!\n');
+   * term.write('\x1b[1;31mBold Red\x1b[0m\n');
+   * term.write(new Uint8Array([0x1b, 0x5b, 0x41])); // Up arrow
+   * ```
+   */
+  write(data: string | Uint8Array): void {
+    const bytes =
+      typeof data === 'string' ? new TextEncoder().encode(data) : data;
+
+    if (bytes.length === 0) return;
+
+    // Allocate in WASM memory
+    const ptr = this.exports.ghostty_wasm_alloc_u8_array(bytes.length);
+    const mem = new Uint8Array(this.memory.buffer);
+    mem.set(bytes, ptr);
+
+    try {
+      this.exports.ghostty_terminal_write(this.handle, ptr, bytes.length);
+    } finally {
+      this.exports.ghostty_wasm_free_u8_array(ptr, bytes.length);
+    }
+  }
+
+  /**
+   * Resize the terminal.
+   * 
+   * @param cols New column count
+   * @param rows New row count
+   */
+  resize(cols: number, rows: number): void {
+    this.exports.ghostty_terminal_resize(this.handle, cols, rows);
+    this._cols = cols;
+    this._rows = rows;
+  }
+
+  /**
+   * Get terminal dimensions.
+   */
+  get cols(): number {
+    return this._cols;
+  }
+
+  get rows(): number {
+    return this._rows;
+  }
+
+  /**
+   * Get cursor position and visibility.
+   */
+  getCursor(): Cursor {
+    return {
+      x: this.exports.ghostty_terminal_get_cursor_x(this.handle),
+      y: this.exports.ghostty_terminal_get_cursor_y(this.handle),
+      visible: this.exports.ghostty_terminal_get_cursor_visible(this.handle),
+    };
+  }
+
+  /**
+   * Get scrollback length (number of lines in history).
+   */
+  getScrollbackLength(): number {
+    return this.exports.ghostty_terminal_get_scrollback_length(this.handle);
+  }
+
+  /**
+   * Get a line of cells from the visible screen.
+   * 
+   * @param y Line number (0 = top visible line)
+   * @returns Array of cells, or null if y is out of bounds
+   * 
+   * @example
+   * ```typescript
+   * const cells = term.getLine(0);
+   * if (cells) {
+   *   for (const cell of cells) {
+   *     const char = String.fromCodePoint(cell.codepoint);
+   *     const isBold = (cell.flags & CellFlags.BOLD) !== 0;
+   *     console.log(`"${char}" ${isBold ? 'bold' : 'normal'}`);
+   *   }
+   * }
+   * ```
+   */
+  getLine(y: number): GhosttyCell[] | null {
+    if (y < 0 || y >= this._rows) return null;
+
+    const bufferSize = this._cols * GhosttyTerminal.CELL_SIZE;
+
+    // Allocate buffer
+    const ptr = this.exports.ghostty_wasm_alloc_u8_array(bufferSize);
+
+    try {
+      // Get line from WASM
+      const count = this.exports.ghostty_terminal_get_line(
+        this.handle,
+        y,
+        ptr,
+        this._cols
+      );
+
+      if (count < 0) return null;
+
+      // Parse cells
+      const cells: GhosttyCell[] = [];
+      const view = new DataView(this.memory.buffer, ptr, bufferSize);
+
+      for (let i = 0; i < count; i++) {
+        const offset = i * GhosttyTerminal.CELL_SIZE;
+        cells.push({
+          codepoint: view.getUint32(offset, true),
+          fg_r: view.getUint8(offset + 4),
+          fg_g: view.getUint8(offset + 5),
+          fg_b: view.getUint8(offset + 6),
+          bg_r: view.getUint8(offset + 7),
+          bg_g: view.getUint8(offset + 8),
+          bg_b: view.getUint8(offset + 9),
+          flags: view.getUint8(offset + 10),
+          width: view.getUint8(offset + 11),
+        });
+      }
+
+      return cells;
+    } finally {
+      this.exports.ghostty_wasm_free_u8_array(ptr, bufferSize);
+    }
+  }
+
+  /**
+   * Get a line from scrollback history.
+   * 
+   * @param offset Line offset from top of scrollback (0 = oldest line)
+   * @returns Array of cells, or null if not available
+   */
+  getScrollbackLine(offset: number): GhosttyCell[] | null {
+    const scrollbackLen = this.getScrollbackLength();
+    if (offset < 0 || offset >= scrollbackLen) return null;
+
+    const bufferSize = this._cols * GhosttyTerminal.CELL_SIZE;
+    const ptr = this.exports.ghostty_wasm_alloc_u8_array(bufferSize);
+
+    try {
+      const count = this.exports.ghostty_terminal_get_scrollback_line(
+        this.handle,
+        offset,
+        ptr,
+        this._cols
+      );
+
+      if (count < 0) return null;
+
+      // Parse cells (same logic as getLine)
+      const cells: GhosttyCell[] = [];
+      const view = new DataView(this.memory.buffer, ptr, bufferSize);
+
+      for (let i = 0; i < count; i++) {
+        const offset = i * GhosttyTerminal.CELL_SIZE;
+        cells.push({
+          codepoint: view.getUint32(offset, true),
+          fg_r: view.getUint8(offset + 4),
+          fg_g: view.getUint8(offset + 5),
+          fg_b: view.getUint8(offset + 6),
+          bg_r: view.getUint8(offset + 7),
+          bg_g: view.getUint8(offset + 8),
+          bg_b: view.getUint8(offset + 9),
+          flags: view.getUint8(offset + 10),
+          width: view.getUint8(offset + 11),
+        });
+      }
+
+      return cells;
+    } finally {
+      this.exports.ghostty_wasm_free_u8_array(ptr, bufferSize);
+    }
+  }
+
+  /**
+   * Check if any part of the screen is dirty.
+   */
+  isDirty(): boolean {
+    return this.exports.ghostty_terminal_is_dirty(this.handle);
+  }
+
+  /**
+   * Check if a specific row is dirty.
+   */
+  isRowDirty(y: number): boolean {
+    if (y < 0 || y >= this._rows) return false;
+    return this.exports.ghostty_terminal_is_row_dirty(this.handle, y);
+  }
+
+  /**
+   * Clear all dirty flags (call after rendering).
+   */
+  clearDirty(): void {
+    this.exports.ghostty_terminal_clear_dirty(this.handle);
+  }
+
+  /**
+   * Get all visible lines at once (convenience method).
+   * 
+   * @returns Array of line arrays, or empty array on error
+   */
+  getAllLines(): GhosttyCell[][] {
+    const lines: GhosttyCell[][] = [];
+    for (let y = 0; y < this._rows; y++) {
+      const line = this.getLine(y);
+      if (line) {
+        lines.push(line);
+      }
+    }
+    return lines;
+  }
+
+  /**
+   * Get only the dirty lines (for optimized rendering).
+   * 
+   * @returns Map of row number to cell array
+   */
+  getDirtyLines(): Map<number, GhosttyCell[]> {
+    const dirtyLines = new Map<number, GhosttyCell[]>();
+    for (let y = 0; y < this._rows; y++) {
+      if (this.isRowDirty(y)) {
+        const line = this.getLine(y);
+        if (line) {
+          dirtyLines.set(y, line);
+        }
+      }
+    }
+    return dirtyLines;
   }
 }

@@ -345,4 +345,110 @@ export interface GhosttyWasmExports extends WebAssembly.Exports {
   ghostty_key_event_set_key(event: number, key: number): void;
   ghostty_key_event_set_mods(event: number, mods: number): void;
   ghostty_key_event_set_utf8(event: number, ptr: number, len: number): void;
+
+  // Terminal
+  ghostty_terminal_new(cols: number, rows: number): TerminalHandle;
+  ghostty_terminal_new_with_config(
+    cols: number,
+    rows: number,
+    configPtr: number
+  ): TerminalHandle;
+  ghostty_terminal_free(terminal: TerminalHandle): void;
+  ghostty_terminal_write(
+    terminal: TerminalHandle,
+    dataPtr: number,
+    dataLen: number
+  ): void;
+  ghostty_terminal_resize(
+    terminal: TerminalHandle,
+    cols: number,
+    rows: number
+  ): void;
+  ghostty_terminal_get_cols(terminal: TerminalHandle): number;
+  ghostty_terminal_get_rows(terminal: TerminalHandle): number;
+  ghostty_terminal_get_cursor_x(terminal: TerminalHandle): number;
+  ghostty_terminal_get_cursor_y(terminal: TerminalHandle): number;
+  ghostty_terminal_get_cursor_visible(terminal: TerminalHandle): boolean;
+  ghostty_terminal_is_dirty(terminal: TerminalHandle): boolean;
+  ghostty_terminal_is_row_dirty(terminal: TerminalHandle, row: number): boolean;
+  ghostty_terminal_clear_dirty(terminal: TerminalHandle): void;
+  ghostty_terminal_get_line(
+    terminal: TerminalHandle,
+    row: number,
+    bufPtr: number,
+    bufLen: number
+  ): number;
+  ghostty_terminal_get_scrollback_line(
+    terminal: TerminalHandle,
+    offset: number,
+    bufPtr: number,
+    bufLen: number
+  ): number;
+  ghostty_terminal_get_scrollback_length(terminal: TerminalHandle): number;
+}
+
+
+// ============================================================================
+// Terminal Types
+// ============================================================================
+
+/**
+ * Opaque terminal pointer (WASM memory address)
+ */
+export type TerminalHandle = number;
+
+/**
+ * Cell structure matching ghostty_cell_t in C (12 bytes)
+ */
+export interface GhosttyCell {
+  codepoint: number;      // u32 (Unicode codepoint)
+  fg_r: number;          // u8 (foreground red)
+  fg_g: number;          // u8 (foreground green)
+  fg_b: number;          // u8 (foreground blue)
+  bg_r: number;          // u8 (background red)
+  bg_g: number;          // u8 (background green)
+  bg_b: number;          // u8 (background blue)
+  flags: number;         // u8 (style flags bitfield)
+  width: number;         // u8 (character width: 1=normal, 2=wide, etc.)
+}
+
+/**
+ * RGB color
+ */
+export interface RGB {
+  r: number;
+  g: number;
+  b: number;
+}
+
+/**
+ * Cell style flags (bitfield)
+ */
+export enum CellFlags {
+  BOLD = 1 << 0,
+  ITALIC = 1 << 1,
+  UNDERLINE = 1 << 2,
+  STRIKETHROUGH = 1 << 3,
+  INVERSE = 1 << 4,
+  INVISIBLE = 1 << 5,
+  BLINK = 1 << 6,
+  FAINT = 1 << 7,
+}
+
+/**
+ * Cursor position and visibility
+ */
+export interface Cursor {
+  x: number;
+  y: number;
+  visible: boolean;
+}
+
+/**
+ * Terminal configuration (passed to ghostty_terminal_new_with_config)
+ */
+export interface TerminalConfig {
+  scrollback_limit: number;  // Number of scrollback lines (default: 10,000)
+  fg_color: RGB;             // Default foreground color
+  bg_color: RGB;             // Default background color
 }

@@ -10,8 +10,17 @@
  * - Dirty line optimization for 60 FPS
  */
 
-import type { ScreenBuffer, Cell, CellColor } from './buffer';
+import type { Cell, CellColor } from './buffer-types';
 import type { ITheme } from './interfaces';
+
+// Interface for objects that can be rendered
+export interface IRenderable {
+  getAllLines(): Cell[][];
+  getCursor(): { x: number; y: number; visible: boolean };
+  getDimensions(): { cols: number; rows: number };
+  isDirty(y: number): boolean;
+  clearDirty(): void;
+}
 
 // ============================================================================
 // Type Definitions
@@ -223,7 +232,7 @@ export class CanvasRenderer {
   /**
    * Render the terminal buffer to canvas
    */
-  public render(buffer: ScreenBuffer, forceAll: boolean = false): void {
+  public render(buffer: IRenderable, forceAll: boolean = false): void {
     const lines = buffer.getAllLines();
     const cursor = buffer.getCursor();
     const dims = buffer.getDimensions();
