@@ -35,14 +35,6 @@ git apply --check ../patches/ghostty-wasm-api.patch || {
 }
 git apply ../patches/ghostty-wasm-api.patch
 
-# Apply set-colors patch (for runtime theme updates)
-if [ -f "../patches/set-colors.patch" ]; then
-    echo "🔧 Applying set-colors patch..."
-    git apply --check ../patches/set-colors.patch || {
-        echo "⚠️ set-colors patch doesn't apply cleanly (may already be included)"
-    }
-    git apply ../patches/set-colors.patch 2>/dev/null || true
-fi
 
 # Build WASM
 echo "⚙️  Building WASM (takes ~20 seconds)..."
