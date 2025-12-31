@@ -356,6 +356,52 @@ export class GhosttyTerminal {
     this.initCellPool();
   }
 
+  /**
+   * Update terminal colors at runtime.
+   * This modifies the terminal's internal color configuration directly.
+   * @param config Color configuration (same format as creation config)
+   */
+  setColors(config: GhosttyTerminalConfig): void {
+    // Allocate config struct in WASM memory
+    const configPtr = this.exports.ghostty_wasm_alloc_u8_array(GHOSTTY_CONFIG_SIZE);
+    if (configPtr === 0) {
+      throw new Error('Failed to allocate config (out of memory)');
+    }
+
+    try {
+      // Write config to WASM memory
+      const view = new DataView(this.memory.buffer);
+      let offset = configPtr;
+
+      // scrollback_limit (u32) - not used for color updates, but struct layout requires it
+      view.setUint32(offset, config.scrollbackLimit ?? 0, true);
+      offset += 4;
+
+      // fg_color (u32)
+      view.setUint32(offset, config.fgColor ?? 0, true);
+      offset += 4;
+
+      // bg_color (u32)
+      view.setUint32(offset, config.bgColor ?? 0, true);
+      offset += 4;
+
+      // cursor_color (u32)
+      view.setUint32(offset, config.cursorColor ?? 0, true);
+      offset += 4;
+
+      // palette[16] (u32 * 16)
+      for (let i = 0; i < 16; i++) {
+        view.setUint32(offset, config.palette?.[i] ?? 0, true);
+        offset += 4;
+      }
+
+      this.exports.ghostty_terminal_set_colors(this.handle, configPtr);
+    } finally {
+      // Free the config memory
+      this.exports.ghostty_wasm_free_u8_array(configPtr, GHOSTTY_CONFIG_SIZE);
+    }
+  }
+
   free(): void {
     if (this.viewportBufferPtr) {
       this.exports.ghostty_wasm_free_u8_array(this.viewportBufferPtr, this.viewportBufferSize);

@@ -29,12 +29,13 @@ import type {
   ITerminalAddon,
   ITerminalCore,
   ITerminalOptions,
+  ITheme,
   IUnicodeVersionProvider,
 } from './interfaces';
 import { LinkDetector } from './link-detector';
 import { OSC8LinkProvider } from './providers/osc8-link-provider';
 import { UrlRegexProvider } from './providers/url-regex-provider';
-import { CanvasRenderer } from './renderer';
+import { CanvasRenderer, DEFAULT_THEME } from './renderer';
 import { SelectionManager } from './selection-manager';
 import type { ILink, ILinkProvider } from './types';
 
@@ -201,7 +202,7 @@ export class Terminal implements ITerminalCore {
 
       case 'theme':
         if (this.renderer) {
-          console.warn('ghostty-web: theme changes after open() are not yet fully supported');
+          this.updateTheme(this.options.theme);
         }
         break;
 
@@ -250,6 +251,54 @@ export class Terminal implements ITerminalCore {
     this.canvas.style.height = `${metrics.height * this.rows}px`;
 
     // Force full re-render with new font
+    this.renderer.render(this.wasmTerm, true, this.viewportY, this);
+  }
+
+  /**
+   * Update theme (called when theme option changes)
+   *
+   * Updates both the renderer theme and the WASM terminal's internal colors.
+   * This enables full runtime theme switching.
+   */
+  private updateTheme(theme?: ITheme): void {
+    if (!this.renderer || !this.wasmTerm) return;
+
+    // Merge with defaults to ensure we have a complete theme
+    const effectiveTheme = { ...DEFAULT_THEME, ...theme };
+
+    // 1. Update renderer theme (for selection, cursor, background clears)
+    this.renderer.setTheme(effectiveTheme);
+
+    // 2. Update WASM terminal colors
+    // Build the color config for the WASM terminal
+    const config = {
+      scrollbackLimit: 0, // Not changing scrollback
+      fgColor: this.parseColorToHex(effectiveTheme.foreground),
+      bgColor: this.parseColorToHex(effectiveTheme.background),
+      cursorColor: this.parseColorToHex(effectiveTheme.cursor),
+      palette: [
+        this.parseColorToHex(effectiveTheme.black),
+        this.parseColorToHex(effectiveTheme.red),
+        this.parseColorToHex(effectiveTheme.green),
+        this.parseColorToHex(effectiveTheme.yellow),
+        this.parseColorToHex(effectiveTheme.blue),
+        this.parseColorToHex(effectiveTheme.magenta),
+        this.parseColorToHex(effectiveTheme.cyan),
+        this.parseColorToHex(effectiveTheme.white),
+        this.parseColorToHex(effectiveTheme.brightBlack),
+        this.parseColorToHex(effectiveTheme.brightRed),
+        this.parseColorToHex(effectiveTheme.brightGreen),
+        this.parseColorToHex(effectiveTheme.brightYellow),
+        this.parseColorToHex(effectiveTheme.brightBlue),
+        this.parseColorToHex(effectiveTheme.brightMagenta),
+        this.parseColorToHex(effectiveTheme.brightCyan),
+        this.parseColorToHex(effectiveTheme.brightWhite),
+      ],
+    };
+
+    this.wasmTerm.setColors(config);
+
+    // 3. Force a full re-render with the new theme
     this.renderer.render(this.wasmTerm, true, this.viewportY, this);
   }
 
