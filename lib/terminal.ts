@@ -270,9 +270,8 @@ export class Terminal implements ITerminalCore {
     this.renderer.setTheme(effectiveTheme);
 
     // 2. Update WASM terminal colors
-    // Build the color config for the WASM terminal
     const config = {
-      scrollbackLimit: 0, // Not changing scrollback
+      scrollbackLimit: this.options.scrollback,
       fgColor: this.parseColorToHex(effectiveTheme.foreground),
       bgColor: this.parseColorToHex(effectiveTheme.background),
       cursorColor: this.parseColorToHex(effectiveTheme.cursor),
