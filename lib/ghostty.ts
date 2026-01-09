@@ -348,7 +348,7 @@ export class GhosttyTerminal {
       typeof data === 'string'
         ? data.substring(0, 50).replace(/\n/g, '\\n')
         : `[${bytes.length} bytes]`;
-    console.log('[GhosttyTerminal] write:', bytes.length, 'bytes, preview:', preview);
+    // console.log('[GhosttyTerminal] write:', bytes.length, 'bytes, preview:', preview);
 
     // For small writes, use the fast path
     if (bytes.length <= GhosttyTerminal.MAX_WRITE_CHUNK_SIZE) {
