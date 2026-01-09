@@ -151,6 +151,7 @@ export class Terminal implements ITerminalCore {
       convertEol: options.convertEol ?? false,
       disableStdin: options.disableStdin ?? false,
       smoothScrollDuration: options.smoothScrollDuration ?? 100, // Default: 100ms smooth scroll
+      scrollbar: options.scrollbar ?? true,
     };
 
     // Wrap in Proxy to intercept runtime changes (xterm.js compatibility)
@@ -225,6 +226,40 @@ export class Terminal implements ITerminalCore {
         // Redirect to resize method
         this.resize(this.options.cols, this.options.rows);
         break;
+
+      case 'scrollbar':
+        if (!this.isScrollbarEnabled()) {
+          this.resetScrollbarState();
+        }
+        if (this.renderer && this.wasmTerm) {
+          this.renderer.render(this.wasmTerm, true, this.viewportY, this, this.getScrollbarOpacity());
+        }
+        break;
+    }
+  }
+
+  private isScrollbarEnabled(): boolean {
+    return this.options.scrollbar !== false;
+  }
+
+  private getScrollbarOpacity(): number {
+    return this.isScrollbarEnabled() ? this.scrollbarOpacity : 0;
+  }
+
+  private resetScrollbarState(): void {
+    if (this.scrollbarHideTimeout) {
+      window.clearTimeout(this.scrollbarHideTimeout);
+      this.scrollbarHideTimeout = undefined;
+    }
+
+    this.scrollbarVisible = false;
+    this.scrollbarOpacity = 0;
+    this.isDraggingScrollbar = false;
+    this.scrollbarDragStart = null;
+
+    if (this.canvas) {
+      this.canvas.style.userSelect = '';
+      this.canvas.style.webkitUserSelect = '';
     }
   }
 
@@ -251,7 +286,7 @@ export class Terminal implements ITerminalCore {
     this.canvas.style.height = `${metrics.height * this.rows}px`;
 
     // Force full re-render with new font
-    this.renderer.render(this.wasmTerm, true, this.viewportY, this);
+    this.renderer.render(this.wasmTerm, true, this.viewportY, this, this.getScrollbarOpacity());
   }
 
   /**
@@ -298,7 +333,7 @@ export class Terminal implements ITerminalCore {
     this.wasmTerm.setColors(config);
 
     // 3. Force a full re-render with the new theme
-    this.renderer.render(this.wasmTerm, true, this.viewportY, this);
+    this.renderer.render(this.wasmTerm, true, this.viewportY, this, this.getScrollbarOpacity());
   }
 
   /**
@@ -563,7 +598,7 @@ export class Terminal implements ITerminalCore {
       parent.addEventListener('wheel', this.handleWheel, { passive: false, capture: true });
 
       // Render initial blank screen (force full redraw)
-      this.renderer.render(this.wasmTerm, true, this.viewportY, this, this.scrollbarOpacity);
+      this.renderer.render(this.wasmTerm, true, this.viewportY, this, this.getScrollbarOpacity());
 
       // Start render loop
       this.startRenderLoop();
@@ -1609,6 +1644,7 @@ export class Terminal implements ITerminalCore {
    */
   private handleMouseDown = (e: MouseEvent): void => {
     if (!this.canvas || !this.renderer || !this.wasmTerm) return;
+    if (!this.isScrollbarEnabled()) return;
 
     const scrollbackLength = this.wasmTerm.getScrollbackLength();
     if (scrollbackLength === 0) return; // No scrollbar if no scrollback
@@ -1666,6 +1702,7 @@ export class Terminal implements ITerminalCore {
    * Handle mouse up for scrollbar drag
    */
   private handleMouseUp = (): void => {
+    if (!this.isScrollbarEnabled()) return;
     if (this.isDraggingScrollbar) {
       this.isDraggingScrollbar = false;
       this.scrollbarDragStart = null;
@@ -1689,6 +1726,7 @@ export class Terminal implements ITerminalCore {
   private processScrollbarDrag(e: MouseEvent): void {
     if (!this.canvas || !this.renderer || !this.wasmTerm || this.scrollbarDragStart === null)
       return;
+    if (!this.isScrollbarEnabled()) return;
 
     const scrollbackLength = this.wasmTerm.getScrollbackLength();
     if (scrollbackLength === 0) return;
@@ -1721,6 +1759,10 @@ export class Terminal implements ITerminalCore {
    * Show scrollbar with fade-in and schedule auto-hide
    */
   private showScrollbar(): void {
+    if (!this.isScrollbarEnabled()) {
+      this.resetScrollbarState();
+      return;
+    }
     // Clear any existing hide timeout
     if (this.scrollbarHideTimeout) {
       window.clearTimeout(this.scrollbarHideTimeout);
@@ -1749,6 +1791,10 @@ export class Terminal implements ITerminalCore {
    * Hide scrollbar with fade-out
    */
   private hideScrollbar(): void {
+    if (!this.isScrollbarEnabled()) {
+      this.resetScrollbarState();
+      return;
+    }
     if (this.scrollbarHideTimeout) {
       window.clearTimeout(this.scrollbarHideTimeout);
       this.scrollbarHideTimeout = undefined;
@@ -1765,14 +1811,21 @@ export class Terminal implements ITerminalCore {
   private fadeInScrollbar(): void {
     const startTime = Date.now();
     const animate = () => {
+      const renderer = this.renderer;
+      const wasmTerm = this.wasmTerm;
+      if (!renderer || !wasmTerm) return;
+
+      if (!this.isScrollbarEnabled()) {
+        this.resetScrollbarState();
+        renderer.render(wasmTerm, false, this.viewportY, this, 0);
+        return;
+      }
       const elapsed = Date.now() - startTime;
       const progress = Math.min(elapsed / this.SCROLLBAR_FADE_DURATION_MS, 1);
       this.scrollbarOpacity = progress;
 
       // Trigger render to show updated opacity
-      if (this.renderer && this.wasmTerm) {
-        this.renderer.render(this.wasmTerm, false, this.viewportY, this, this.scrollbarOpacity);
-      }
+      renderer.render(wasmTerm, false, this.viewportY, this, this.getScrollbarOpacity());
 
       if (progress < 1) {
         requestAnimationFrame(animate);
@@ -1788,14 +1841,21 @@ export class Terminal implements ITerminalCore {
     const startTime = Date.now();
     const startOpacity = this.scrollbarOpacity;
     const animate = () => {
+      const renderer = this.renderer;
+      const wasmTerm = this.wasmTerm;
+      if (!renderer || !wasmTerm) return;
+
+      if (!this.isScrollbarEnabled()) {
+        this.resetScrollbarState();
+        renderer.render(wasmTerm, false, this.viewportY, this, 0);
+        return;
+      }
       const elapsed = Date.now() - startTime;
       const progress = Math.min(elapsed / this.SCROLLBAR_FADE_DURATION_MS, 1);
       this.scrollbarOpacity = startOpacity * (1 - progress);
 
       // Trigger render to show updated opacity
-      if (this.renderer && this.wasmTerm) {
-        this.renderer.render(this.wasmTerm, false, this.viewportY, this, this.scrollbarOpacity);
-      }
+      renderer.render(wasmTerm, false, this.viewportY, this, this.getScrollbarOpacity());
 
       if (progress < 1) {
         requestAnimationFrame(animate);
