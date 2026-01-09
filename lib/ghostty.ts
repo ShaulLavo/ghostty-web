@@ -339,12 +339,56 @@ export class GhosttyTerminal {
   // Lifecycle
   // ==========================================================================
 
+  /** Maximum chunk size for writes to avoid WASM memory issues (512 bytes) */
+  private static readonly MAX_WRITE_CHUNK_SIZE = 512;
+
   write(data: string | Uint8Array): void {
     const bytes = typeof data === 'string' ? new TextEncoder().encode(data) : data;
+    const preview =
+      typeof data === 'string'
+        ? data.substring(0, 50).replace(/\n/g, '\\n')
+        : `[${bytes.length} bytes]`;
+    console.log('[GhosttyTerminal] write:', bytes.length, 'bytes, preview:', preview);
+
+    // For small writes, use the fast path
+    if (bytes.length <= GhosttyTerminal.MAX_WRITE_CHUNK_SIZE) {
+      this.writeChunk(bytes);
+      return;
+    }
+
+    // For large writes, split into chunks to avoid WASM memory issues
+    let offset = 0;
+    while (offset < bytes.length) {
+      const chunkSize = Math.min(GhosttyTerminal.MAX_WRITE_CHUNK_SIZE, bytes.length - offset);
+      const chunk = bytes.subarray(offset, offset + chunkSize);
+      this.writeChunk(chunk);
+      offset += chunkSize;
+    }
+  }
+
+  /** Internal: Write a single chunk to WASM (must be <= MAX_WRITE_CHUNK_SIZE) */
+  private writeChunk(bytes: Uint8Array): void {
     const ptr = this.exports.ghostty_wasm_alloc_u8_array(bytes.length);
-    new Uint8Array(this.memory.buffer).set(bytes, ptr);
-    this.exports.ghostty_terminal_write(this.handle, ptr, bytes.length);
-    this.exports.ghostty_wasm_free_u8_array(ptr, bytes.length);
+    if (ptr === 0) {
+      throw new Error(`Failed to allocate ${bytes.length} bytes in WASM memory`);
+    }
+    try {
+      // IMPORTANT: Re-fetch memory buffer after allocation - WASM memory may have grown
+      // which causes the old ArrayBuffer to become detached
+      const memoryBuffer = this.exports.memory.buffer;
+
+      // Bounds check to catch issues early
+      if (ptr + bytes.length > memoryBuffer.byteLength) {
+        throw new Error(
+          `WASM memory bounds exceeded: ptr=${ptr}, len=${bytes.length}, bufLen=${memoryBuffer.byteLength}`
+        );
+      }
+
+      new Uint8Array(memoryBuffer).set(bytes, ptr);
+      this.exports.ghostty_terminal_write(this.handle, ptr, bytes.length);
+    } finally {
+      this.exports.ghostty_wasm_free_u8_array(ptr, bytes.length);
+    }
   }
 
   resize(cols: number, rows: number): void {
