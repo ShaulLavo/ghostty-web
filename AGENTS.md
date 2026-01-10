@@ -427,3 +427,9 @@ When stuck:
 2. Look at demo code in `demo/*.html`
 3. Read Ghostty source for WASM implementation details
 4. Check xterm.js docs for API compatibility questions
+
+## 🦾 Coding Standards
+
+### 🗣️ Comments & Complexity
+- **Minimalism**: Avoid adding comments unless they are important (explain *why*, not *what*).
+- **Code Clarity**: If code is complex, reduce nesting and move statements/calculations into variables or functions with descriptive names over commenting.
