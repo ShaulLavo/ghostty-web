@@ -232,7 +232,13 @@ export class Terminal implements ITerminalCore {
           this.resetScrollbarState();
         }
         if (this.renderer && this.wasmTerm) {
-          this.renderer.render(this.wasmTerm, true, this.viewportY, this, this.getScrollbarOpacity());
+          this.renderer.render(
+            this.wasmTerm,
+            true,
+            this.viewportY,
+            this,
+            this.getScrollbarOpacity()
+          );
         }
         break;
     }
