@@ -1,3 +1,4 @@
+
 # Agent Guide - Ghostty WASM Terminal
 
 **For AI coding agents working on this repository.**
@@ -434,3 +435,7 @@ When stuck:
 
 - **Minimalism**: Avoid adding comments unless they are important (explain _why_, not _what_).
 - **Code Clarity**: If code is complex, reduce nesting and move statements/calculations into variables or functions with descriptive names over commenting.
+
+
+
+

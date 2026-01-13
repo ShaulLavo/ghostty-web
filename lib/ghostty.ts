@@ -124,14 +124,18 @@ export class Ghostty {
 
     // Fall back to fetch (for browser environments)
     if (!wasmBytes) {
-      const response = await fetch(path);
-      if (!response.ok) {
-        throw new Error(`Failed to fetch WASM: ${response.status} ${response.statusText}`);
-      }
-      wasmBytes = await response.arrayBuffer();
-      if (wasmBytes.byteLength === 0) {
-        throw new Error(`WASM file is empty (0 bytes). Check path: ${path}`);
-      }
+      const { up } = await import('up-fetch');
+      const upfetch = up(fetch);
+      
+      wasmBytes = await upfetch(path, {
+        parseResponse: async (res) => {
+          const arrayBuffer = await res.arrayBuffer();
+          if (arrayBuffer.byteLength === 0) {
+            throw new Error(`WASM file is empty (0 bytes). Check path: ${path}`);
+          }
+          return arrayBuffer;
+        }
+      });
     }
 
     if (!wasmBytes) {
